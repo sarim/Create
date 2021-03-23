@@ -1,18 +1,5 @@
 package com.simibubi.create.content.contraptions.components.structureMovement;
 
-import static net.minecraft.entity.Entity.collideBoundingBoxHeuristically;
-import static net.minecraft.entity.Entity.horizontalMag;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Stream;
-
-import org.apache.commons.lang3.mutable.MutableBoolean;
-import org.apache.commons.lang3.mutable.MutableFloat;
-import org.apache.commons.lang3.mutable.MutableInt;
-import org.apache.commons.lang3.mutable.MutableObject;
-
-import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableSet;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.AllMovementBehaviours;
@@ -23,9 +10,11 @@ import com.simibubi.create.foundation.collision.ContinuousOBBCollider.Continuous
 import com.simibubi.create.foundation.collision.Matrix3d;
 import com.simibubi.create.foundation.collision.OrientedBB;
 import com.simibubi.create.foundation.networking.AllPackets;
+import com.simibubi.create.foundation.utility.BlockHelper;
 import com.simibubi.create.foundation.utility.Iterate;
+import com.simibubi.create.foundation.utility.Pair;
 import com.simibubi.create.foundation.utility.VecHelper;
-
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.CocoaBlock;
 import net.minecraft.client.entity.player.ClientPlayerEntity;
@@ -50,6 +39,14 @@ import net.minecraft.world.gen.feature.template.Template.BlockInfo;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.fml.DistExecutor;
+import org.apache.commons.lang3.mutable.*;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+import static net.minecraft.entity.Entity.collideBoundingBoxHeuristically;
+import static net.minecraft.entity.Entity.horizontalMag;
 
 public class ContraptionCollider {
 
@@ -110,7 +107,7 @@ public class ContraptionCollider {
 			// Find all potential block shapes to collide with
 			AxisAlignedBB localBB = entityBounds.offset(position)
 				.grow(1.0E-7D);
-			ReuseableStream<VoxelShape> potentialHits =
+			ReuseableStream<Pair<VoxelShape, Double>> potentialHits =
 				getPotentiallyCollidedShapes(world, contraption, localBB.expand(motion));
 			if (potentialHits.createStream()
 				.count() == 0)
@@ -127,25 +124,38 @@ public class ContraptionCollider {
 			MutableFloat temporalResponse = new MutableFloat(1);
 			Vec3d obbCenter = obb.getCenter();
 
+			double bounciness = 0;
+
 			// Apply separation maths
-			List<AxisAlignedBB> bbs = new ArrayList<>();
+			List<Pair<AxisAlignedBB, Double>> bbs = new ArrayList<>();
 			potentialHits.createStream()
-				.forEach(shape -> shape.toBoundingBoxList()
-					.forEach(bbs::add));
+				.forEach(shape -> shape.getFirst().toBoundingBoxList()
+					.forEach(bb -> bbs.add(Pair.of(bb, shape.getSecond()))));
 
 			boolean doHorizontalPass = !rotation.hasVerticalRotation();
+			MutableObject<Vec3d> normal = new MutableObject<>(Vec3d.ZERO);
+
 			for (boolean horizontalPass : Iterate.trueAndFalse) {
 				boolean verticalPass = !horizontalPass || !doHorizontalPass;
 
-				for (AxisAlignedBB bb : bbs) {
+				for (Pair<AxisAlignedBB, Double> bb : bbs) {
 					Vec3d currentResponse = collisionResponse.getValue();
+					Vec3d currentNormal = normal.getValue();
 					obb.setCenter(obbCenter.add(currentResponse));
-					ContinuousSeparationManifold intersect = obb.intersect(bb, motion);
+					ContinuousSeparationManifold intersect = obb.intersect(bb.getFirst(), motion);
 
 					if (intersect == null)
 						continue;
 					if (verticalPass && surfaceCollision.isFalse())
 						surfaceCollision.setValue(intersect.isSurfaceCollision());
+
+					if (bb.getSecond() > bounciness)
+						bounciness = bb.getSecond();
+
+					Vec3d collidingNormal = intersect.axis; // intersect.asSeparationVec(0);
+					if (collidingNormal != null && !collidingNormal.equals(Vec3d.ZERO)) {
+						normal.setValue(currentNormal.add(collidingNormal));
+					}
 
 					double timeOfImpact = intersect.getTimeOfImpact();
 					if (timeOfImpact > 0 && timeOfImpact < 1) {
@@ -155,8 +165,9 @@ public class ContraptionCollider {
 					}
 
 					Vec3d separation = intersect.asSeparationVec(entity.stepHeight);
-					if (separation != null && !separation.equals(Vec3d.ZERO))
+					if (separation != null && !separation.equals(Vec3d.ZERO)) {
 						collisionResponse.setValue(currentResponse.add(separation));
+					}
 				}
 
 				if (verticalPass)
@@ -173,10 +184,19 @@ public class ContraptionCollider {
 				continue;
 			}
 
+			BlockPos contraptionPos = new BlockPos(position.add(entity.getPositionVector()).add(0, -0.2, 0));
+			BlockInfo info = contraption.getBlocks().get(contraptionPos);
+			if (info != null) {
+				Block block = info.state.getBlock();
+				if (!entity.bypassesSteppingEffects()) {
+					block.onEntityWalk(entity.world, contraptionPos, entity);
+				}
+			}
+
 			// Resolve collision
 			Vec3d entityMotion = entity.getMotion();
 			Vec3d totalResponse = collisionResponse.getValue();
-			boolean hardCollision = !totalResponse.equals(Vec3d.ZERO);
+			boolean hardCollision =!totalResponse.equals(Vec3d.ZERO);
 			boolean temporalCollision = temporalResponse.getValue() != 1;
 			Vec3d motionResponse = !temporalCollision ? motion
 				: motion.normalize()
@@ -189,12 +209,33 @@ public class ContraptionCollider {
 			totalResponse = VecHelper.rotate(totalResponse, yawOffset, Axis.Y);
 			rotationMatrix.transpose();
 
+			if (!normal.getValue().equals(Vec3d.ZERO) || !totalResponse.equals(Vec3d.ZERO) || !collisionResponse.getValue().equals(Vec3d.ZERO)) {
+				System.out.println("Normal: " + normal.getValue().normalize());
+				Vec3d pseudoNormal = contraptionEntity.getRotationState().asMatrix().transform(normal.getValue().normalize());
+				System.out.println("Pseudo Normal: " + pseudoNormal);
+				pseudoNormal = VecHelper.rotate(pseudoNormal, yawOffset, Axis.Y);
+				System.out.println("Pseudo Normal: " + pseudoNormal);
+				Vec3d newNormal = normal.getValue().crossProduct(normal.getValue().crossProduct(entity.getMotion())).normalize();
+				System.out.println("New Normal: " + newNormal);
+				System.out.println("Response: " + totalResponse);
+				System.out.println("Reaction: " + collisionResponse.getValue());
+				System.out.println("Motion Response: " + motionResponse);
+
+
+				// FIXME: there is no working normal in all the experiments i did...
+				if (bounceEntity(entity, newNormal, contraptionEntity, bounciness)) {
+					continue;
+				}
+			}
+
 			if (temporalCollision) {
+
 				double idealVerticalMotion = motionResponse.y;
 				if (idealVerticalMotion != entityMotion.y) {
 					entity.setMotion(entityMotion.mul(1, 0, 1)
 						.add(0, idealVerticalMotion, 0));
 					entityMotion = entity.getMotion();
+
 				}
 			}
 
@@ -205,7 +246,6 @@ public class ContraptionCollider {
 				double intersectX = totalResponse.getX();
 				double intersectY = totalResponse.getY();
 				double intersectZ = totalResponse.getZ();
-
 				double horizonalEpsilon = 1 / 128f;
 				if (motionX != 0 && Math.abs(intersectX) > horizonalEpsilon && motionX > 0 == intersectX < 0)
 					entityMotion = entityMotion.mul(0, 1, 1);
@@ -252,6 +292,40 @@ public class ContraptionCollider {
 			AllPackets.channel.sendToServer(new ClientMotionPacket(entityMotion, true, limbSwing));
 		}
 
+	}
+
+	private static boolean bounceEntity(Entity entity, Vec3d planeNormal, AbstractContraptionEntity contraptionEntity, double bounciness)  {
+		if (bounciness != 0 && !entity.bypassesLandingEffects()) {
+			Vec3d v1 = planeNormal.normalize();
+			if (v1 != Vec3d.ZERO) {
+				// Contraption doesn't move, only the entity does!
+  				Vec3d contraptionVec = contraptionEntity.getContactPointMotion(entity.getPositionVec());
+				Vec3d v2 = entity.getMotion().crossProduct(v1).normalize();
+
+
+				if (v2 != Vec3d.ZERO) {
+					contraptionVec = v1.scale(contraptionVec.dotProduct(v1)).add(v2.scale(contraptionVec.dotProduct(v2)));
+				} else {
+					v2 = v1.crossProduct(v1.add(Math.random(), Math.random(), Math.random())).normalize();
+				}
+
+				Vec3d v3 = v1.crossProduct(v2);
+				Vec3d vRelative = entity.getMotion().subtract(contraptionVec);
+
+				Vec3d lr = new Vec3d(bounciness * vRelative.dotProduct(v1), -vRelative.dotProduct(v2), -vRelative.dotProduct(v3));
+
+				// System.out.println(lr);
+				if (lr.dotProduct(lr) > 0.1D || true) {
+					Vec3d newMot = contraptionVec.add(
+						v1.x * lr.x + v2.x * lr.y + v3.x * lr.z,
+						v1.y * lr.x + v2.y * lr.y + v3.y * lr.z,
+						v1.z * lr.x + v2.z * lr.y + v3.z * lr.z);
+					entity.setMotion(newMot);
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	public static Vec3d getWorldToLocalTranslation(Entity entity, AbstractContraptionEntity contraptionEntity) {
@@ -352,8 +426,8 @@ public class ContraptionCollider {
 		return entity instanceof ClientPlayerEntity;
 	}
 
-	private static ReuseableStream<VoxelShape> getPotentiallyCollidedShapes(World world, Contraption contraption,
-		AxisAlignedBB localBB) {
+	private static ReuseableStream<Pair<VoxelShape, Double>> getPotentiallyCollidedShapes(World world, Contraption contraption,
+																			AxisAlignedBB localBB) {
 
 		double height = localBB.getYSize();
 		double width = localBB.getXSize();
@@ -365,7 +439,7 @@ public class ContraptionCollider {
 		BlockPos min = new BlockPos(blockScanBB.minX, blockScanBB.minY, blockScanBB.minZ);
 		BlockPos max = new BlockPos(blockScanBB.maxX, blockScanBB.maxY, blockScanBB.maxZ);
 
-		ReuseableStream<VoxelShape> potentialHits = new ReuseableStream<>(BlockPos.getAllInBox(min, max)
+		return new ReuseableStream<>(BlockPos.getAllInBox(min, max)
 			.filter(contraption.getBlocks()::containsKey)
 			.map(p -> {
 				BlockState blockState = contraption.getBlocks()
@@ -373,11 +447,9 @@ public class ContraptionCollider {
 				BlockPos pos = contraption.getBlocks()
 					.get(p).pos;
 				VoxelShape collisionShape = blockState.getCollisionShape(world, p);
-				return collisionShape.withOffset(pos.getX(), pos.getY(), pos.getZ());
+				return Pair.of(collisionShape.withOffset(pos.getX(), pos.getY(), pos.getZ()), BlockHelper.getBounceMultiplier(blockState.getBlock()));
 			})
-			.filter(Predicates.not(VoxelShape::isEmpty)));
-
-		return potentialHits;
+			.filter(pair -> !pair.getFirst().isEmpty()));
 	}
 
 	public static boolean collideBlocks(AbstractContraptionEntity contraptionEntity) {

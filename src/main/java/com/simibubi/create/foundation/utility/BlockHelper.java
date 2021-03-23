@@ -2,6 +2,12 @@ package com.simibubi.create.foundation.utility;
 
 import java.util.function.Consumer;
 
+import com.simibubi.create.content.contraptions.components.actors.SeatBlock;
+import net.minecraft.block.BedBlock;
+import net.minecraft.block.SlimeBlock;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.world.gen.feature.template.Template;
 import org.apache.commons.lang3.mutable.MutableInt;
 
 import net.minecraft.block.Block;
@@ -190,4 +196,11 @@ public class BlockHelper {
 		return reader.getBlockState(pos).getCollisionShape(reader, pos).isEmpty();
 	}
 
+	public static double getBounceMultiplier(Block block) {
+		if (block instanceof SlimeBlock)
+			return 0.8D;
+		if (block instanceof BedBlock || block instanceof SeatBlock)
+			return 0.66 * 0.8D;
+		return 0;
+	}
 }

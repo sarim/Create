@@ -72,7 +72,7 @@ public class OBBCollider {
 	}
 
 	static class SeparationManifold {
-		Vec3d axis;
+		public Vec3d axis;
 		double separation;
 
 		public SeparationManifold() {
