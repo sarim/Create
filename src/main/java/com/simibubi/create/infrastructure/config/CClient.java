@@ -18,6 +18,7 @@ public class CClient extends ConfigBase {
 	public final ConfigFloat fanParticleDensity = f(.5f, 0, 1, "fanParticleDensity",
 			Comments.fanParticleDensity);
 	public final ConfigFloat filterItemRenderDistance = f(10f, 1, "filterItemRenderDistance", Comments.filterItemRenderDistance);
+	public final ConfigInt beltItemRenderDistance = i(16, 1, 128, "beltItemRenderDistance", Comments.beltItemRenderDistance);
 	public final ConfigBool rainbowDebug = b(false, "enableRainbowDebug",
 			Comments.rainbowDebug);
 	public final ConfigInt maxContraptionLightVolume = i(16384, 0, Integer.MAX_VALUE, "maximumContraptionLightVolume",
@@ -105,6 +106,10 @@ public class CClient extends ConfigBase {
 		static String[] filterItemRenderDistance = new String[]{
 				"[in Blocks]",
 				"Maximum Distance to the player at which items in Blocks' filter slots will be displayed"
+		};
+		static String[] beltItemRenderDistance = new String[]{
+				"[in Blocks]",
+				"Maximum Distance to the player at which items on belts will be displayed"
 		};
 		static String rainbowDebug = "Show kinetic debug information on blocks while the F3-Menu is open.";
 		static String maxContraptionLightVolume = "The maximum amount of blocks for which to try and calculate dynamic contraption lighting. Decrease if large contraption cause too much lag";

@@ -23,6 +23,7 @@ import com.simibubi.create.foundation.utility.AngleHelper;
 import com.simibubi.create.foundation.utility.AnimationTickHolder;
 import com.simibubi.create.foundation.utility.Iterate;
 import com.simibubi.create.foundation.utility.worldWrappers.WrappedWorld;
+import com.simibubi.create.infrastructure.config.AllConfigs;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -198,6 +199,9 @@ public class BeltRenderer extends SafeBlockEntityRenderer<BeltBlockEntity> {
 
 		for (TransportedItemStack transported : be.getInventory()
 			.getTransportedItems()) {
+				if (Minecraft.getInstance().player != null && !BeltHelper.getPositionForOffset(be, Mth.floor(transported.beltPosition)).closerThan(Minecraft.getInstance().player.getOnPos(), AllConfigs.client().beltItemRenderDistance.get()))
+					continue;
+
 			ms.pushPose();
             TransformStack.cast(ms)
 				.nudge(transported.angle);
